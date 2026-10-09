@@ -1,0 +1,790 @@
+//******************************************/
+// Universidad del Valle de Guatemala
+// BE3029 - Electronica Digital 2
+// Pablo Gomez - 24412
+// Skarleth Ramon - 24102
+// Proyecto No. 2
+//******************************************/
+
+#include <Arduino.h>
+#include <ESP32SPISlave.h>
+#include <Wire.h>
+#include <LiquidCrystal.h>
+
+//******************************************/
+// PARTE 2 - LEDS
+//******************************************/
+
+#define LED_R 15
+#define LED_G 2
+#define LED_Y 4
+
+//******************************************/
+// PARTE 2 - SPI VSPI
+//******************************************/
+
+// CS   = GPIO5
+// SCK  = GPIO18
+// MISO = GPIO19
+// MOSI = GPIO23
+
+#define queueSize 1
+#define TAM_SPI 5
+
+ESP32SPISlave slave;
+
+uint8_t txBuffer[TAM_SPI] = {0, 0, 0, 0, 0};
+uint8_t rxBuffer[TAM_SPI] = {0, 0, 0, 0, 0};
+
+//******************************************/
+// VARIABLES LED
+//******************************************/
+
+bool ledActivo = false;
+
+uint8_t pinLEDActivo = 0;
+
+unsigned long inicioLED = 0;
+
+uint32_t duracionLED = 0;
+
+char ultimoLED = '-';
+
+//******************************************/
+// PARTE 3 - I2C
+//******************************************/
+
+#define I2C_DEV_ADDR 0x32
+
+// SDA = GPIO21
+// SCL = GPIO22
+
+//******************************************/
+// PARTE 3 - ADC
+//******************************************/
+
+#define POT1 34
+
+// ADC original 0 - 4095
+uint16_t lecturaPot = 0;
+
+// ADC convertido 0 - 255
+volatile uint8_t sensorI2C = 0;
+
+// Voltaje
+float voltajePot = 0.0;
+
+//******************************************/
+// NUEVO CONTROL DE SOLICITUD I2C
+//******************************************/
+
+volatile bool solicitudI2C = false;
+
+//******************************************/
+// PARTE 4 - LCD
+//******************************************/
+
+const int rs = 33;
+const int en = 32;
+const int d4 = 25;
+const int d5 = 26;
+const int d6 = 27;
+const int d7 = 14;
+
+LiquidCrystal lcd(
+    rs,
+    en,
+    d4,
+    d5,
+    d6,
+    d7
+);
+
+// Actualizacion LCD
+unsigned long prevTimeLCD = 0;
+
+//******************************************/
+// PROTOTIPOS I2C
+//******************************************/
+
+void onReceive(int len);
+
+void onRequest();
+
+//******************************************/
+// APAGAR LEDS
+//******************************************/
+
+void apagarLEDs()
+{
+    digitalWrite(
+        LED_R,
+        LOW
+    );
+
+    digitalWrite(
+        LED_G,
+        LOW
+    );
+
+    digitalWrite(
+        LED_Y,
+        LOW
+    );
+
+    ledActivo = false;
+}
+
+//******************************************/
+// PARTE 2
+// EJECUTAR COMANDO SPI
+//******************************************/
+
+void ejecutarComando(
+    uint8_t led,
+    uint32_t tiempo)
+{
+    apagarLEDs();
+
+    //******************************************/
+    // LED 1 = ROJO
+    //******************************************/
+
+    if (led == 1)
+    {
+        pinLEDActivo =
+            LED_R;
+
+        digitalWrite(
+            LED_R,
+            HIGH
+        );
+
+        ultimoLED = 'R';
+
+        Serial.println(
+            "LED ROJO"
+        );
+    }
+
+    //******************************************/
+    // LED 2 = VERDE
+    //******************************************/
+
+    else if (led == 2)
+    {
+        pinLEDActivo =
+            LED_G;
+
+        digitalWrite(
+            LED_G,
+            HIGH
+        );
+
+        ultimoLED = 'G';
+
+        Serial.println(
+            "LED VERDE"
+        );
+    }
+
+    //******************************************/
+    // LED 3 = AMARILLO
+    //******************************************/
+
+    else if (led == 3)
+    {
+        pinLEDActivo =
+            LED_Y;
+
+        digitalWrite(
+            LED_Y,
+            HIGH
+        );
+
+        ultimoLED = 'Y';
+
+        Serial.println(
+            "LED AMARILLO"
+        );
+    }
+
+    else
+    {
+        return;
+    }
+
+    Serial.print(
+        "Tiempo: "
+    );
+
+    Serial.print(
+        tiempo
+    );
+
+    Serial.println(
+        " ms"
+    );
+
+    inicioLED =
+        millis();
+
+    duracionLED =
+        tiempo;
+
+    ledActivo =
+        true;
+}
+
+//******************************************/
+// PARTE 2
+// CONTROLAR APAGADO DEL LED
+//******************************************/
+
+void actualizarLED()
+{
+    if (ledActivo)
+    {
+        if (
+            millis() - inicioLED
+            >= duracionLED
+        )
+        {
+            digitalWrite(
+                pinLEDActivo,
+                LOW
+            );
+
+            ledActivo =
+                false;
+
+            Serial.println(
+                "LED apagado"
+            );
+        }
+    }
+}
+
+//******************************************/
+// PARTE 3
+// LEER POTENCIOMETRO
+//******************************************/
+
+void leerPotenciometro()
+{
+    //******************************************/
+    // ADC 12 BITS
+    // 0 - 4095
+    //******************************************/
+
+    lecturaPot =
+        analogRead(
+            POT1
+        );
+
+    //******************************************/
+    // CONVERTIR A 8 BITS
+    // 0 - 255
+    //******************************************/
+
+    sensorI2C =
+        map(
+            lecturaPot,
+            0,
+            4095,
+            0,
+            255
+        );
+
+    //******************************************/
+    // VOLTAJE
+    //******************************************/
+
+    voltajePot =
+        (
+            lecturaPot *
+            3.3
+        ) /
+        4095.0;
+}
+
+//******************************************/
+// PARTE 3
+// RECIBIR SOLICITUD DE LA NUCLEO
+//******************************************/
+
+void onReceive(int len)
+{
+    while (
+        Wire.available()
+    )
+    {
+        uint8_t comando =
+            Wire.read();
+
+        //******************************************/
+        // M = NUEVA MEDICION
+        //******************************************/
+
+        if (
+            comando == 'M'
+        )
+        {
+            /*
+             * NO hacemos analogRead aqui.
+             *
+             * Solo avisamos al loop que
+             * debe hacer una medicion nueva.
+             */
+
+            solicitudI2C =
+                true;
+        }
+    }
+}
+
+//******************************************/
+// PARTE 3
+// NUCLEO SOLICITA EL DATO
+//******************************************/
+
+void onRequest()
+{
+    /*
+     * Mandamos exactamente el ADC
+     * de 0 a 255.
+     *
+     * NO se invierte.
+     */
+
+    Wire.write(
+        sensorI2C
+    );
+}
+
+//******************************************/
+// SETUP
+//******************************************/
+
+void setup()
+{
+    Serial.begin(
+        115200
+    );
+
+    //******************************************/
+    // PARTE 2 - LEDS
+    //******************************************/
+
+    pinMode(
+        LED_R,
+        OUTPUT
+    );
+
+    pinMode(
+        LED_G,
+        OUTPUT
+    );
+
+    pinMode(
+        LED_Y,
+        OUTPUT
+    );
+
+    apagarLEDs();
+
+    //******************************************/
+    // PARTE 3 - ADC
+    //******************************************/
+
+    pinMode(
+        POT1,
+        INPUT
+    );
+
+    analogReadResolution(
+        12
+    );
+
+    analogSetAttenuation(
+        ADC_11db
+    );
+
+    // Primera lectura
+
+    leerPotenciometro();
+
+    //******************************************/
+    // PARTE 4 - LCD
+    //******************************************/
+
+    lcd.begin(
+        16,
+        2
+    );
+
+    lcd.clear();
+
+    //******************************************/
+    // ENCABEZADOS LCD
+    //******************************************/
+
+    lcd.setCursor(
+        0,
+        0
+    );
+
+    lcd.print(
+        "Pot1:"
+    );
+
+    lcd.setCursor(
+        6,
+        0
+    );
+
+    lcd.print(
+        "Pot1:"
+    );
+
+    lcd.setCursor(
+        12,
+        0
+    );
+
+    lcd.print(
+        "LED:"
+    );
+
+    //******************************************/
+    // PARTE 3 - I2C ESCLAVO
+    //******************************************/
+
+    Wire.onReceive(
+        onReceive
+    );
+
+    Wire.onRequest(
+        onRequest
+    );
+
+    Wire.begin(
+        (uint8_t)I2C_DEV_ADDR
+    );
+
+    Serial.println(
+        "I2C esclavo listo"
+    );
+
+    Serial.println(
+        "Direccion I2C = 0x32"
+    );
+
+    Serial.println(
+        "SDA = GPIO21"
+    );
+
+    Serial.println(
+        "SCL = GPIO22"
+    );
+
+    Serial.println(
+        "POT = GPIO34"
+    );
+
+    //******************************************/
+    // PARTE 2 - SPI ESCLAVO
+    //******************************************/
+
+    slave.setDataMode(
+        SPI_MODE0
+    );
+
+    slave.setQueueSize(
+        queueSize
+    );
+
+    slave.begin(
+        VSPI
+    );
+
+    Serial.println(
+        "ESP32 listo como esclavo SPI"
+    );
+
+    Serial.println(
+        "SCK  = GPIO18"
+    );
+
+    Serial.println(
+        "MISO = GPIO19"
+    );
+
+    Serial.println(
+        "MOSI = GPIO23"
+    );
+
+    Serial.println(
+        "CS   = GPIO5"
+    );
+
+    Serial.println(
+        "Rojo = GPIO15"
+    );
+
+    Serial.println(
+        "Verde = GPIO2"
+    );
+
+    Serial.println(
+        "Amarillo = GPIO4"
+    );
+}
+
+//******************************************/
+// LOOP
+//******************************************/
+
+void loop()
+{
+    //******************************************/
+    // PARTE 2
+    // PREPARAR TRANSACCION SPI
+    //******************************************/
+
+    if (
+        slave.
+        hasTransactionsCompletedAndAllResultsHandled()
+    )
+    {
+        memset(
+            txBuffer,
+            0,
+            TAM_SPI
+        );
+
+        memset(
+            rxBuffer,
+            0,
+            TAM_SPI
+        );
+
+        slave.queue(
+            txBuffer,
+            rxBuffer,
+            TAM_SPI
+        );
+
+        slave.trigger();
+    }
+
+    //******************************************/
+    // PARTE 2
+    // PROCESAR TRANSACCION SPI
+    //******************************************/
+
+    if (
+        slave.
+        hasTransactionsCompletedAndAllResultsReady(
+            queueSize
+        )
+    )
+    {
+        slave.numBytesReceivedAll();
+
+        //******************************************/
+        // BYTE 0 = LED
+        //******************************************/
+
+        uint8_t led =
+            rxBuffer[0];
+
+        //******************************************/
+        // BYTES 1-4 = TIEMPO
+        //******************************************/
+
+        uint32_t tiempo =
+            ((uint32_t)rxBuffer[1]) |
+
+            ((uint32_t)rxBuffer[2] << 8) |
+
+            ((uint32_t)rxBuffer[3] << 16) |
+
+            ((uint32_t)rxBuffer[4] << 24);
+
+        Serial.print(
+            "LED recibido: "
+        );
+
+        Serial.println(
+            led
+        );
+
+        Serial.print(
+            "Tiempo recibido: "
+        );
+
+        Serial.print(
+            tiempo
+        );
+
+        Serial.println(
+            " ms"
+        );
+
+        //******************************************/
+        // VALIDAR
+        //******************************************/
+
+        if (
+            (led >= 1) &&
+            (led <= 3) &&
+            (tiempo > 0)
+        )
+        {
+            ejecutarComando(
+                led,
+                tiempo
+            );
+        }
+    }
+
+    //******************************************/
+    // PARTE 2
+    // CONTROL DEL LED
+    //******************************************/
+
+    actualizarLED();
+
+    //******************************************/
+    // PARTE 3
+    // REALIZAR MEDICION SOLICITADA POR I2C
+    //******************************************/
+
+    if (
+        solicitudI2C == true
+    )
+    {
+        solicitudI2C =
+            false;
+
+        /*
+         * Aqui SI hacemos analogRead,
+         * fuera del callback de I2C.
+         */
+
+        leerPotenciometro();
+
+        // Solo para comprobar
+
+        Serial.print(
+            "Dato preparado para I2C: "
+        );
+
+        Serial.println(
+            sensorI2C
+        );
+
+        Serial.print(
+            "Voltaje preparado: "
+        );
+
+        Serial.print(
+            voltajePot,
+            2
+        );
+
+        Serial.println(
+            " V"
+        );
+    }
+
+    //******************************************/
+    // PARTE 4
+    // ACTUALIZAR LCD CADA 250 ms
+    //******************************************/
+
+    if (
+        millis() - prevTimeLCD
+        >= 250
+    )
+    {
+        prevTimeLCD =
+            millis();
+
+        // Leer potenciometro
+
+        leerPotenciometro();
+
+        //******************************************/
+        // VOLTAJE
+        //******************************************/
+
+        lcd.setCursor(
+            0,
+            1
+        );
+
+        lcd.print(
+            "     "
+        );
+
+        lcd.setCursor(
+            0,
+            1
+        );
+
+        lcd.print(
+            voltajePot,
+            2
+        );
+
+        lcd.print(
+            "V"
+        );
+
+        //******************************************/
+        // ADC 0 - 255
+        //******************************************/
+
+        lcd.setCursor(
+            6,
+            1
+        );
+
+        lcd.print(
+            "   "
+        );
+
+        lcd.setCursor(
+            6,
+            1
+        );
+
+        lcd.print(
+            sensorI2C
+        );
+
+        //******************************************/
+        // ULTIMO LED
+        //******************************************/
+
+        lcd.setCursor(
+            13,
+            1
+        );
+
+        lcd.print(
+            " "
+        );
+
+        lcd.setCursor(
+            13,
+            1
+        );
+
+        lcd.print(
+            ultimoLED
+        );
+    }
+}
