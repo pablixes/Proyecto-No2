@@ -1,0 +1,402 @@
+//******************************************/
+// Universidad del Valle de Guatemala
+// BE3029 - Electronica Digital 2
+/ Pablo Gómez - 24412
+// Skarleth Ramón - 24102
+// Proyecto No. 2
+//
+//******************************************/
+
+#include <Arduino.h>
+#include <ESP32SPISlave.h>
+
+//******************************************/
+// LEDS
+//******************************************/
+
+#define LED_R 15
+#define LED_G 2
+#define LED_Y 4
+
+//******************************************/
+// SPI VSPI
+//******************************************/
+
+// CS   = GPIO5
+// SCK  = GPIO18
+// MISO = GPIO19
+// MOSI = GPIO23
+
+#define queueSize 1
+
+#define TAM_SPI 5
+
+ESP32SPISlave slave;
+
+uint8_t txBuffer[TAM_SPI] =
+{
+    0,0,0,0,0
+};
+
+uint8_t rxBuffer[TAM_SPI] =
+{
+    0,0,0,0,0
+};
+
+//******************************************/
+// VARIABLES LED
+//******************************************/
+
+bool ledActivo = false;
+
+uint8_t pinLEDActivo = 0;
+
+unsigned long inicioLED = 0;
+
+uint32_t duracionLED = 0;
+
+char ultimoLED = '-';
+
+//******************************************/
+// APAGAR LEDS
+//******************************************/
+
+void apagarLEDs()
+{
+    digitalWrite(
+        LED_R,
+        LOW
+    );
+
+    digitalWrite(
+        LED_G,
+        LOW
+    );
+
+    digitalWrite(
+        LED_Y,
+        LOW
+    );
+
+    ledActivo = false;
+}
+
+//******************************************/
+// EJECUTAR COMANDO SPI
+//******************************************/
+
+void ejecutarComando(
+    uint8_t led,
+    uint32_t tiempo)
+{
+    apagarLEDs();
+
+    //******************************************/
+    // LED ROJO
+    //******************************************/
+
+    if (led == 1)
+    {
+        pinLEDActivo =
+            LED_R;
+
+        digitalWrite(
+            LED_R,
+            HIGH
+        );
+
+        ultimoLED = 'R';
+
+        Serial.println(
+            "LED ROJO"
+        );
+    }
+
+    //******************************************/
+    // LED VERDE
+    //******************************************/
+
+    else if (led == 2)
+    {
+        pinLEDActivo =
+            LED_G;
+
+        digitalWrite(
+            LED_G,
+            HIGH
+        );
+
+        ultimoLED = 'G';
+
+        Serial.println(
+            "LED VERDE"
+        );
+    }
+
+    //******************************************/
+    // LED AMARILLO
+    //******************************************/
+
+    else if (led == 3)
+    {
+        pinLEDActivo =
+            LED_Y;
+
+        digitalWrite(
+            LED_Y,
+            HIGH
+        );
+
+        ultimoLED = 'Y';
+
+        Serial.println(
+            "LED AMARILLO"
+        );
+    }
+
+    else
+    {
+        return;
+    }
+
+    Serial.print(
+        "Tiempo: "
+    );
+
+    Serial.print(
+        tiempo
+    );
+
+    Serial.println(
+        " ms"
+    );
+
+    //******************************************/
+    // GUARDAR TIEMPO
+    // OJOO - SIN USAR DELAY
+    //******************************************/
+
+    inicioLED =
+        millis();
+
+    duracionLED =
+        tiempo;
+
+    ledActivo =
+        true;
+}
+
+//******************************************/
+// CONTROLAR APAGADO DEL LED
+//******************************************/
+
+void actualizarLED()
+{
+    if (ledActivo)
+    {
+        if (
+            millis() - inicioLED
+            >= duracionLED
+        )
+        {
+            digitalWrite(
+                pinLEDActivo,
+                LOW
+            );
+
+            ledActivo =
+                false;
+
+            Serial.println(
+                "LED apagado"
+            );
+        }
+    }
+}
+
+//******************************************/
+// SETUP
+//******************************************/
+
+void setup()
+{
+    Serial.begin(
+        115200
+    );
+
+    //******************************************/
+    // LEDS
+    //******************************************/
+
+    pinMode(
+        LED_R,
+        OUTPUT
+    );
+
+    pinMode(
+        LED_G,
+        OUTPUT
+    );
+
+    pinMode(
+        LED_Y,
+        OUTPUT
+    );
+
+    apagarLEDs();
+
+    //******************************************/
+    // SPI ESCLAVO
+    //******************************************/
+
+    slave.setDataMode(
+        SPI_MODE0
+    );
+
+    slave.setQueueSize(
+        queueSize
+    );
+
+    slave.begin(
+        VSPI
+    );
+
+    Serial.println(
+        "ESP32 listo como esclavo SPI"
+    );
+
+    Serial.println(
+        "SCK  = GPIO18"
+    );
+
+    Serial.println(
+        "MISO = GPIO19"
+    );
+
+    Serial.println(
+        "MOSI = GPIO23"
+    );
+
+    Serial.println(
+        "CS   = GPIO5"
+    );
+}
+
+//******************************************/
+// LOOP
+//******************************************/
+
+void loop()
+{
+    //******************************************/
+    // PREPARAR TRANSACCION SPI
+    //******************************************/
+
+    if (
+        slave.
+        hasTransactionsCompletedAndAllResultsHandled()
+    )
+    {
+        memset(
+            txBuffer,
+            0,
+            TAM_SPI
+        );
+
+        memset(
+            rxBuffer,
+            0,
+            TAM_SPI
+        );
+
+        slave.queue(
+            txBuffer,
+            rxBuffer,
+            TAM_SPI
+        );
+
+        slave.trigger();
+    }
+
+    //******************************************/
+    // PROCESAR TRANSACCION RECIBIDA
+    //******************************************/
+
+    if (
+        slave.
+        hasTransactionsCompletedAndAllResultsReady(
+            queueSize
+        )
+    )
+    {
+        /*
+         * En esta version de la libreria
+         * NO utilizamos getResults().
+         */
+
+        slave.numBytesReceivedAll();
+
+        //******************************************/
+        // BYTE 0 = LED
+        //******************************************/
+
+        uint8_t led =
+            rxBuffer[0];
+
+        //******************************************/
+        // BYTES 1-4 = TIEMPO
+        //******************************************/
+
+        uint32_t tiempo =
+            ((uint32_t)rxBuffer[1]) |
+            ((uint32_t)rxBuffer[2] << 8) |
+            ((uint32_t)rxBuffer[3] << 16) |
+            ((uint32_t)rxBuffer[4] << 24);
+
+        //******************************************/
+        // MOSTRAR DATOS
+        //******************************************/
+
+        Serial.print(
+            "LED recibido: "
+        );
+
+        Serial.println(
+            led
+        );
+
+        Serial.print(
+            "Tiempo recibido: "
+        );
+
+        Serial.print(
+            tiempo
+        );
+
+        Serial.println(
+            " ms"
+        );
+
+        //******************************************/
+        // VALIDAR
+        //******************************************/
+
+        if (
+            (led >= 1) &&
+            (led <= 3) &&
+            (tiempo > 0)
+        )
+        {
+            ejecutarComando(
+                led,
+                tiempo
+            );
+        }
+    }
+
+    //******************************************/
+    // APAGAR LED CUANDO TERMINE SU TIEMPO
+    //******************************************/
+
+    actualizarLED();
+}
